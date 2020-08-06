@@ -1,0 +1,166 @@
+07/05/2020 03:01:38 PM INFO: Reading notebook Neumann_8D.ipynb
+07/05/2020 03:01:39 PM INFO: Running cell:
+import math
+import numpy as np
+import numpy.random as npr
+from numpy import linalg
+import torch
+import torch.nn.functional as F
+import torch.nn as nn
+from torch.utils import data
+from torch.utils.data import Dataset
+import torch.optim as optim
+import time
+from math import *
+torch.cuda.set_device(4)
+
+07/05/2020 03:01:40 PM INFO: Cell returned
+07/05/2020 03:01:40 PM INFO: Running cell:
+class ResNet(nn.Module):
+    def __init__(self,dim, m,o):
+        super(ResNet, self).__init__()
+        self.Ix = torch.zeros([dim,m]).cuda()
+        for i in range(dim):
+            self.Ix[i,i] = 1
+    
+        self.fc1 = nn.Linear(dim, m)
+        self.fc2 = nn.Linear(m, m)
+        
+        self.fc3 = nn.Linear(m, m)
+        self.fc4 = nn.Linear(m, m)
+
+        self.fc5 = nn.Linear(m, m)
+        self.fc6 = nn.Linear(m, m)
+        self.outlayer = nn.Linear(m, o)
+
+    def forward(self, x):
+        s = x@self.Ix
+        y = self.fc1(x)
+        y = F.relu(y)**deg
+        y = self.fc2(y)
+        y = F.relu(y)**deg
+        y = y+s
+        
+        s=y
+        y = self.fc3(y)
+        y = F.relu(y)**deg
+        y = self.fc4(y)
+        y = F.relu(y)**deg
+        y = y+s
+        s=y
+        y = self.fc5(y)
+        y = F.relu(y)**deg
+        y = self.fc6(y)
+        y = F.relu(y)**deg
+        y = y+s
+        output = self.outlayer(y)
+        return output
+deg = 2
+
+07/05/2020 03:01:40 PM INFO: Cell returned
+07/05/2020 03:01:40 PM INFO: Running cell:
+torch.set_default_tensor_type('torch.DoubleTensor')
+
+07/05/2020 03:01:40 PM INFO: Cell returned
+07/05/2020 03:01:40 PM INFO: Running cell:
+def generate_uniform_points_in_sphere(d,R,N):
+    points = torch.randn(N,d)
+    scales = (R*torch.rand(N))**(1/d)
+    notes = points/(torch.sqrt(torch.sum(points**2,dim=1))/scales).reshape(N,1)*torch.ones(N ,d)
+    return notes
+
+07/05/2020 03:01:40 PM INFO: Cell returned
+07/05/2020 03:01:40 PM INFO: Running cell:
+def sol_exact(x):
+    norm_2 = torch.sum(x**2,dim=1).reshape([x.size()[0],1])
+    N_u = torch.cos(norm_2-1)
+    return N_u
+
+07/05/2020 03:01:40 PM INFO: Cell returned
+07/05/2020 03:01:40 PM INFO: Running cell:
+def right(x):
+    norm_2 = torch.sum(x**2,dim=1).reshape([x.size()[0],1])
+    N_u = 2*dim_set*torch.sin(1-norm_2)
+    N_u = N_u - 4*norm_2*torch.cos(1-norm_2)
+    return N_u
+
+07/05/2020 03:01:40 PM INFO: Cell returned
+07/05/2020 03:01:40 PM INFO: Running cell:
+Batch_size = 10000
+dim_set = 8
+def DGM():
+    x = generate_uniform_points_in_sphere(dim_set,1,Batch_size).cuda()
+    x.requires_grad = True
+    norm = (torch.sum(x**2,dim=1).reshape([x.size()[0],1]))**(1/2)
+    u = model_u(x)
+    v= torch.ones(u.shape).cuda()
+    ux = (torch.autograd.grad(u,x,grad_outputs=v,create_graph=True)[0])
+    uxx = torch.zeros(Batch_size,dim_set).cuda()
+    for i in range(dim_set):
+        ux_tem = ux[:,i].reshape([x.size()[0],1])
+        uxx_tem = torch.autograd.grad(ux_tem,x,grad_outputs=v,create_graph=True)[0]
+        uxx[:,i] = uxx_tem[:,i]
+    loss = torch.sum((torch.sum(uxx,dim=1).reshape([x.size()[0],1])+ u - sol_exact(x) -right(x))**2)/Batch_size
+    return loss
+
+07/05/2020 03:01:40 PM INFO: Cell returned
+07/05/2020 03:01:40 PM INFO: Running cell:
+model_u1 = ResNet(dim_set,20,1)
+device=torch.device("cuda:4" )
+model_u1.to(device)
+
+07/05/2020 03:01:43 PM INFO: Cell returned
+07/05/2020 03:01:43 PM INFO: Running cell:
+def model_u(x):
+    x.requires_grad = True
+    N_x = model_u1(x)
+    v= torch.ones(N_x.shape).cuda()
+    norm_2 = torch.sum(x**2,dim=1).reshape([x.size()[0],1])
+    L_N = norm_2-1
+    N_v = x
+    nabla_N_x = torch.autograd.grad(N_x,x,grad_outputs=v,create_graph=True)[0]
+    G = -torch.sum(nabla_N_x*N_v,dim=1).reshape([x.size()[0],1])
+    return L_N*G/2 + N_x
+
+07/05/2020 03:01:43 PM INFO: Cell returned
+07/05/2020 03:01:43 PM INFO: Running cell:
+def loss_error():
+    notes_error = generate_uniform_points_in_sphere(dim_set,1,Batch_size).cuda()
+    notes_error.requires_grad= True
+    exact = sol_exact(notes_error)
+    u_L2 = torch.sqrt(torch.sum(exact**2)/10000)
+    predict= model_u(notes_error)
+    value = torch.sqrt(torch.sum((predict[:,0] - exact[:,0])**2)/10000)/u_L2
+    return value
+
+07/05/2020 03:01:43 PM INFO: Cell returned
+07/05/2020 03:01:43 PM INFO: Running cell:
+traintime = 100000
+error_save=np.zeros([traintime])
+optimizer = optim.Adam([
+                {'params': model_u1.parameters()}
+            ])
+i = 0
+time_start=time.time()
+for i in range(traintime):
+    optimizer.zero_grad()
+    losses = DGM()
+    error = loss_error()
+    losses.backward()
+    optimizer.step() 
+    error_save[i]=float(error)
+    i = i +1
+    #scheduler.step()
+    if i%500==1:
+        print("i= ",i)
+        print("error =",error)
+        print("loss1 =",losses.detach())
+        np.save("error_save_Neumann_s_8D_w20.npy", error_save)
+np.save("error_save_Neumann_s_8D_w20.npy", error_save)
+time_end=time.time()
+print('time cost',time_end-time_start,'s')
+
+07/05/2020 11:11:55 PM INFO: Cell returned
+07/05/2020 11:11:55 PM INFO: Shutdown kernel
+/home/lylyu/.local/lib/python3.6/site-packages/jupyter_client/manager.py:358: FutureWarning: Method cleanup(connection_file=True) is deprecated, use cleanup_resources(restart=False).
+  FutureWarning)
